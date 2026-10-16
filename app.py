@@ -68,18 +68,35 @@ def is_valid_email(email):
 
 
 def send_email(to_address, subject, body):
-    try:
-        message = MIMEText(body, "plain", "utf-8")
-        message["Subject"] = Header(subject, "utf-8")
-        message["From"] = GMAIL_ADDRESS
-        message["To"] = to_address
+    message = MIMEText(body, "plain", "utf-8")
+    message["Subject"] = Header(subject, "utf-8")
+    message["From"] = GMAIL_ADDRESS
+    message["To"] = to_address
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    errors = []
+
+    # Attempt 1: SSL on port 465
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as server:
             server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
             server.send_message(message)
         return True, "sent"
     except Exception as error:
-        return False, str(error)
+        errors.append(f"port 465: {error}")
+
+    # Attempt 2: STARTTLS on port 587
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            server.send_message(message)
+        return True, "sent"
+    except Exception as error:
+        errors.append(f"port 587: {error}")
+
+    return False, " | ".join(errors)
 
 
 # Onboarding
@@ -133,9 +150,22 @@ with st.sidebar:
         )
         if success:
             st.session_state.last_summary = summary
+            st.session_state.pop("failed_summary", None)
             st.success("Sent! Check your inbox 📬")
         else:
+            # Keep the prep sheet so the user can still download it
+            st.session_state.failed_summary = summary
             st.error(f"Couldn't send that: {info}")
+
+    # Backup: shown after a failed send, and stays visible across reruns
+    if "failed_summary" in st.session_state:
+        st.download_button(
+            "⬇️ Download prep sheet instead",
+            data=st.session_state.failed_summary,
+            file_name="InterviewSnap_prep_sheet.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
 
     if st.button("🔄 New interview", use_container_width=True):
         st.session_state.chat = create_chat(
@@ -143,6 +173,7 @@ with st.sidebar:
         )
         st.session_state.messages = []
         st.session_state.pop("last_summary", None)
+        st.session_state.pop("failed_summary", None)
         st.rerun()
 
     if "last_summary" in st.session_state:
